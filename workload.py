@@ -1,20 +1,21 @@
+import os
 import requests
 import json
 import psycopg2
 from psycopg2 import sql
 from confluent_kafka import Consumer, KafkaException, KafkaError
 
-# Database connection details
-DB_NAME = "literature_scripts"
-DB_USER = "vv8"
-DB_PASSWORD = "vv8"
-DB_HOST = "localhost"  
-DB_PORT = "5434"  
+# Get database connection details from environment variables
+DB_NAME = os.getenv('DB_NAME', 'literature_scripts')
+DB_USER = os.getenv('DB_USER', 'vv8')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'vv8')
+DB_HOST = os.getenv('DB_HOST', 'localhost')  
+DB_PORT = os.getenv('DB_PORT', '5432')  
 
-# Kafka configuration
-KAFKA_BROKER = 'localhost:9092' 
-KAFKA_TOPIC = 'web_archive_script_extraction'  
-KAFKA_GROUP = 'web_archive_group'  # Consumer group
+# Get Kafka configuration from environment variables
+KAFKA_BROKER = os.getenv('KAFKA_BROKER', 'localhost:9092')
+KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'web_archive_script_extraction')
+KAFKA_GROUP = os.getenv('KAFKA_GROUP', 'web_archive_group')
 
 # Function to fetch data from an API
 def fetch_data_from_api(api_url, params=None):
@@ -161,7 +162,7 @@ def consume_messages():
                 else:
                     print("No script URL found in API response.")
             else:
-                print("No snapshot available for the specified URL and timestamp.")
+                print(f"No snapshot available for the specified URL: {url} and timeframe: {years}.")
 
             # Check for stop signal
             if data.get('command') == 'stop':

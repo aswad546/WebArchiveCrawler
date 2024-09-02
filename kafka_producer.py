@@ -106,7 +106,7 @@ def main():
     
     # Kafka configuration
     kafka_config = {
-        'bootstrap.servers': 'localhost:9092',  # Update with your Kafka broker address
+        'bootstrap.servers': 'kafka:9092',  # Update to use the Docker network hostname for Kafka
     }
     topic_name = 'web_archive_script_extraction'  
 

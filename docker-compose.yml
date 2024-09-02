@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    environment:
+      ALLOW_ANONYMOUS_LOGIN: "yes"
+    ports:
+      - "2181:2181"
+
+  kafka:
+    build:
+      context: .
+      dockerfile: Dockerfile.kafka  # Specify the custom Dockerfile
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9092"]  # Health check using nc
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  consumer:
+    image: script_extraction_consumer:latest
+    environment:
+      DB_HOST: host.docker.internal
+      DB_PORT: 5434
+      DB_NAME: literature_scripts
+      DB_USER: vv8
+      DB_PASSWORD: vv8
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: web_archive_script_extraction
+      KAFKA_GROUP: web_archive_group
+    depends_on:
+      kafka:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  producer:
+    image: kafka_producer:latest
+    environment:
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: web_archive_script_extraction
+    depends_on:
+      kafka:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  default:
+    name: webarchivecrawler_network

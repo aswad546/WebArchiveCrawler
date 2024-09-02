@@ -1,0 +1,8 @@
+# Use the Bitnami Kafka base image
+FROM bitnami/kafka:latest
+
+# Switch to root to install packages
+USER root
+
+# Install netcat-openbsd (nc)
+RUN apt-get update && apt-get install -y netcat-openbsd
