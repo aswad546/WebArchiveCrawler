@@ -1,0 +1,1 @@
+This repository will take inputs from existing browser fingerprinting papers and extract details from pages using the webarchive to ensure the data used is valid
