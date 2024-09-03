@@ -11,7 +11,7 @@ services:
   kafka:
     build:
       context: .
-      dockerfile: Dockerfile.kafka  # Specify the custom Dockerfile
+      dockerfile: Dockerfile.kafka
     ports:
       - "9092:9092"
     environment:
@@ -24,7 +24,7 @@ services:
     depends_on:
       - zookeeper
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "9092"]  # Health check using nc
+      test: ["CMD", "nc", "-z", "localhost", "9092"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -45,6 +45,8 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    deploy:
+      replicas: 10  # Set the number of consumer replicas here
 
   producer:
     image: kafka_producer:latest

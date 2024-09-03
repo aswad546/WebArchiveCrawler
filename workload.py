@@ -5,177 +5,172 @@ import psycopg2
 from psycopg2 import sql
 from confluent_kafka import Consumer, KafkaException, KafkaError
 
-# Get database connection details from environment variables
+
+# Configuration details
 DB_NAME = os.getenv('DB_NAME', 'literature_scripts')
 DB_USER = os.getenv('DB_USER', 'vv8')
 DB_PASSWORD = os.getenv('DB_PASSWORD', 'vv8')
-DB_HOST = os.getenv('DB_HOST', 'localhost')  
-DB_PORT = os.getenv('DB_PORT', '5432')  
-
-# Get Kafka configuration from environment variables
+DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_PORT = os.getenv('DB_PORT', '5432')
 KAFKA_BROKER = os.getenv('KAFKA_BROKER', 'localhost:9092')
 KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'web_archive_script_extraction')
 KAFKA_GROUP = os.getenv('KAFKA_GROUP', 'web_archive_group')
 
-# Function to fetch data from an API
-def fetch_data_from_api(api_url, params=None):
-    try:
-        response = requests.get(api_url, params=params)
-        response.raise_for_status()  # Raise an error for bad responses
-        return response.json() 
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching data from API: {e}")
+class DatabaseService:
+    def __init__(self):
+        self.conn = self.connect_to_database()
+
+    def connect_to_database(self):
+        try:
+            conn = psycopg2.connect(
+                dbname=DB_NAME,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                host=DB_HOST,
+                port=DB_PORT
+            )
+            self.create_table_if_not_exists(conn)
+            return conn
+        except psycopg2.DatabaseError as e:
+            print(f"Error connecting to the database: {e}")
+            return None
+
+    def create_table_if_not_exists(self, conn):
+        try:
+            with conn.cursor() as cursor:
+                create_table_query = """
+                CREATE TABLE IF NOT EXISTS fingerprinters_fp_radar (
+                    id SERIAL PRIMARY KEY,
+                    rank INTEGER,
+                    url TEXT,
+                    web_archive_url TEXT,
+                    code TEXT,
+                    fp_type TEXT,
+                    timestamp TIMESTAMP
+                );
+                """
+                cursor.execute(create_table_query)
+                conn.commit()
+        except psycopg2.DatabaseError as e:
+            print(f"Error creating table: {e}")
+
+    def insert_script_to_database(self, rank, url, web_archive_url, code, fp_type):
+        try:
+            with self.conn.cursor() as cursor:
+                insert_query = """
+                INSERT INTO fingerprinters_fp_radar (rank, url, web_archive_url, code, fp_type, timestamp)
+                VALUES (%s, %s, %s, %s, %s, now());
+                """
+                cursor.execute(insert_query, (rank, url, web_archive_url, code, fp_type))
+                self.conn.commit()
+        except psycopg2.DatabaseError as e:
+            print(f"Error inserting data into the table: {e}")
+
+
+class WebArchiveFetcher:
+    def __init__(self, url, years):
+        self.url = url
+        self.years = years
+        self.api_url = "https://archive.org/wayback/available?"
+
+    def fetch_data_from_api(self, params=None):
+        try:
+            response = requests.get(self.api_url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching data from API: {e}")
+            return None
+
+    def fetch_script_content(self, script_url):
+        try:
+            response = requests.get(script_url)
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching script from URL: {e}")
+            return None
+
+    def extract_js_url(self):
+        js_index = self.url.find('.js')
+        if js_index != -1:
+            return self.url[:js_index + 3]
+        return self.url
+
+    def get_valid_snapshot(self):
+        self.url = self.extract_js_url()
+        orig_years = self.years.copy()
+        for year in orig_years:
+            params = {'url': self.url, 'timestamp': year}
+            api_data = self.fetch_data_from_api(params)
+            if api_data and 'archived_snapshots' in api_data and api_data['archived_snapshots']:
+                return api_data['archived_snapshots'].get('closest')
+        print(f"Failed to find a valid snapshot for URL: {self.url} in timeframe: {orig_years}")
         return None
 
-# Function to fetch script content from a URL
-def fetch_script_content(script_url):
-    try:
-        response = requests.get(script_url)
-        response.raise_for_status()  # Raise an error for bad responses
-        return response.text  # Get the raw text of the script file
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching script from URL: {e}")
-        return None
 
-# Function to connect to the PostgreSQL database
-def connect_to_database():
-    try:
-        conn = psycopg2.connect(
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST,
-            port=DB_PORT
-        )
-        return conn
-    except psycopg2.DatabaseError as e:
-        print(f"Error connecting to the database: {e}")
-        return None
+class KafkaConsumerService:
+    def __init__(self, db_service):
+        self.db_service = db_service
+        self.consumer = Consumer({
+            'bootstrap.servers': KAFKA_BROKER,
+            'group.id': KAFKA_GROUP,
+            'auto.offset.reset': 'earliest'
+        })
+        self.consumer.subscribe([KAFKA_TOPIC])
 
-# Function to create the table if it does not exist
-def create_table_if_not_exists(conn):
-    try:
-        with conn.cursor() as cursor:
-            create_table_query = """
-            CREATE TABLE IF NOT EXISTS fingerprinters_fp_radar (
-                id SERIAL PRIMARY KEY,
-                rank INTEGER,
-                url TEXT,
-                web_archive_url TEXT,
-                code TEXT,
-                fp_type TEXT,
-                timestamp TIMESTAMP
-            );
-            """
-            cursor.execute(create_table_query)
-            conn.commit()
-    except psycopg2.DatabaseError as e:
-        print(f"Error creating table: {e}")
+    def consume_messages(self):
+        try:
+            while True:
+                msg = self.consumer.poll(1.0)
 
-# Function to insert the script content into the database
-def insert_script_to_database(conn, rank, url, web_archive_url, code, fp_type):
-    try:
-        with conn.cursor() as cursor:
-            insert_query = """
-            INSERT INTO fingerprinters_fp_radar (rank, url, web_archive_url, code, fp_type, timestamp)
-            VALUES (%s, %s, %s, %s, %s, now());
-            """
-            cursor.execute(insert_query, (rank, url, web_archive_url, code, fp_type))
-            conn.commit()
-    except psycopg2.DatabaseError as e:
-        print(f"Error inserting data into the table: {e}")
-
-def consume_messages():
-    # Connect to the PostgreSQL database
-    conn = connect_to_database()
-    if conn is None:
-        print("Database connection failed.")
-        return
-    
-    # Create the table if it does not exist
-    create_table_if_not_exists(conn)
-
-    # Configure Kafka consumer
-    consumer = Consumer({
-        'bootstrap.servers': KAFKA_BROKER,
-        'group.id': KAFKA_GROUP,
-        'auto.offset.reset': 'earliest'
-    })
-
-    # Subscribe to Kafka topic
-    consumer.subscribe([KAFKA_TOPIC])
-
-    try:
-        while True:
-            msg = consumer.poll(1.0)  # Poll for new messages from Kafka
-
-            if msg is None:
-                continue
-
-            if msg.error():
-                if msg.error().code() == KafkaError._PARTITION_EOF:
+                if msg is None:
                     continue
+
+                if msg.error():
+                    if msg.error().code() == KafkaError._PARTITION_EOF:
+                        continue
+                    else:
+                        print(f"Kafka error: {msg.error()}")
+                        break
+
+                data = json.loads(msg.value().decode('utf-8'))
+                url = data.get('url')
+                years = data.get('years')
+                rank = data.get('rank')
+                api_type = data.get('api_type')
+
+                fetcher = WebArchiveFetcher(url, years)
+                existing_snapshot = fetcher.get_valid_snapshot()
+
+                if existing_snapshot:
+                    script_url = existing_snapshot['url']
+                    script_content = fetcher.fetch_script_content(script_url)
+
+                    if script_content:
+                        print(f"Script fetched successfully for URL: {url} and snapshot: {script_url}")
+                        self.db_service.insert_script_to_database(rank, url, script_url, script_content, api_type)
+                        print(f"Script content inserted into the database for URL: {url} and snapshot: {script_url}")
+                    else:
+                        print(f"Failed to fetch script content from snapshot URL: {script_url} for original URL: {url}.")
                 else:
-                    print(f"Kafka error: {msg.error()}")
+                    print(f"No valid snapshot found for URL: {url} and years: {years}.")
+
+                if data.get('command') == 'stop':
+                    print("Received stop command. Shutting down.")
                     break
 
-            # Process message
-            data = json.loads(msg.value().decode('utf-8'))
-            url = data.get('url')
-            years = data.get('years')
-            rank = data.get('rank') 
-            api_type = data.get('api_type')
+        except KeyboardInterrupt:
+            print("Interrupted by user")
 
-            # Ensure years is sorted latest to earliest and check all the years the script might have existed in
-            years.sort(reverse=True)
+        finally:
+            self.consumer.close()
+            if self.db_service.conn:
+                self.db_service.conn.close()
 
-            api_url = "https://archive.org/wayback/available?"
-            params = {'url': url, 'timestamp': years[0]} # Get script from most recent year
-            api_data = fetch_data_from_api(api_url, params)
-            years.pop(0)
-            while 'archived_snapshots' not in api_data and len(years) != 0:
-                params = {'url': url, 'timestamp': years[0]}
-                api_data = fetch_data_from_api(api_url, params)
-                years.pop(0) # Remove the year that has no script in the web archive
-            if not api_data or 'archived_snapshots' not in api_data:
-                print("Failed to fetch data from API.")
-                continue
-
-            existing_snapshot = api_data['archived_snapshots'].get('closest')
-            
-            # Check if a snapshot exists for this page with the given year
-            if existing_snapshot:
-                script_url = existing_snapshot['url']
-                
-                if script_url:
-                    # Fetch the script content from the extracted URL
-                    script_content = fetch_script_content(script_url)
-                    
-                    if script_content:
-                        print("Script fetched successfully.")
-                        
-                        # Insert the script content into the database
-                        insert_script_to_database(conn, rank, url, script_url, script_content, api_type)
-                        print("Script content inserted into the database.")
-                    else:
-                        print("Failed to fetch the script content.")
-                else:
-                    print("No script URL found in API response.")
-            else:
-                print(f"No snapshot available for the specified URL: {url} and timeframe: {years}.")
-
-            # Check for stop signal
-            if data.get('command') == 'stop':
-                print("Received stop command. Shutting down.")
-                break
-
-    except KeyboardInterrupt:
-        print("Interrupted by user")
-
-    finally:
-        # Close Kafka consumer and database connection
-        consumer.close()
-        conn.close()
 
 if __name__ == "__main__":
-    consume_messages()
+    db_service = DatabaseService()
+    if db_service.conn:
+        kafka_service = KafkaConsumerService(db_service)
+        kafka_service.consume_messages()
