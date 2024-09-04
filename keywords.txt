@@ -1,0 +1,32 @@
+Callsign, callsignone, callsign.com
+Deepnet Security, deepnet, deepnetsecurity, typesense
+MangoPay, nethone, mangopay.com, nethone.com
+Nudata, nudata, ndjsstaticversion, nds-pmd, nudatasecurity,
+Prove, prove_prefill, prove.com, unifyid
+SecureAuth, arculix, secureauth, acceptto, biobehavior
+TypingDNA, typingdna, api.typingdna, gettypingpattern
+BioCatch, cdapi, wupmessage
+Behaviosec, behaviosec
+ThreatMark, threatmark, javascriptprobeurl
+pingIdentity, pingone, securedtouch
+Bureau.id, bureau.id
+Thales Id, gemalto, gemaltodigitalbankingidcloud, bankingidcloud
+FeedZai, feedzai
+Socure, sigmadevicemanager, socure, device-risk-sdk
+Transmit Security, tsaccountprotectionprovider, tsaccountprotectionready, tsplatform, web_sdk_latest.js
+Experian NeuroID, nid.js, nid_id, data-nid-no-track
+IBM Trusteer Pinpoint Detect, trusteer, awuse4.advanced-web-analytics.com
+IBM Security Verify, ibmverify
+Cleafy, cleafy
+Forter, forter.com, forter
+Celebrus, celebrus
+Authenware, authenware
+Arkose Labs, api.arkoselabs, arkoselabs
+Darwinium, profilinginstance, geo_location_enabled, dwn*.start
+ThreatFabric, threatfabric
+Accertify, accertify, prod.accdab
+Human PerimeterX, _pxAppId, perimeterx
+F5 Risk Services, riskservices
+DataVisor, dv-api, datavisor
+Graboxy, graboxy
+Sardine, sardine.ai, sardine

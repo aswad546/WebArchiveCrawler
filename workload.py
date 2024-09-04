@@ -3,7 +3,7 @@ import requests
 import json
 import psycopg2
 from psycopg2 import sql
-from confluent_kafka import Consumer, KafkaException, KafkaError
+from confluent_kafka import Consumer, KafkaError
 
 
 # Configuration details
@@ -100,7 +100,9 @@ class WebArchiveFetcher:
     def get_valid_snapshot(self):
         self.url = self.extract_js_url()
         orig_years = self.years.copy()
+        orig_years.sort(reverse=True)
         for year in orig_years:
+            print(f'Trying to get snapshot for URL:{self.url} in year: {year}')
             params = {'url': self.url, 'timestamp': year}
             api_data = self.fetch_data_from_api(params)
             if api_data and 'archived_snapshots' in api_data and api_data['archived_snapshots']:
