@@ -29,7 +29,7 @@ def create_result_table_if_not_exists(conn):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                DROP TABLE IF EXISTS wayback_fp_data
+                DROP TABLE IF EXISTS wayback_fp_data;
                 CREATE TABLE IF NOT EXISTS wayback_fp_data (
                     id SERIAL PRIMARY KEY,
                     script_url TEXT UNIQUE,
@@ -97,6 +97,7 @@ def fetch_wayback_javascript(script_url, years=[2023, 2022]):
     If no snapshot is found, falls back to live fetching.
     """
     for year in years:
+        time.sleep(5)
         wayback_url, error = query_wayback(script_url, year)
         if wayback_url:
             try:
@@ -156,7 +157,7 @@ def process_scripts(conn):
 
                 # Insert fetched script into the result table
                 insert_into_results(conn, script_url, wayback_url, archived, script_code)
-
+                time.sleep(10)
                 progress_bar.update(1)
     except Exception as e:
         log_message(f"Error processing scripts: {e}")

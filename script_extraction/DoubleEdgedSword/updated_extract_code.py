@@ -37,6 +37,7 @@ def create_result_table_if_not_exists(conn):
     try:
         with conn.cursor() as cur:
             cur.execute("""
+                DROP TABLE IF EXISTS doubleedgesword;
                 CREATE TABLE IF NOT EXISTS doubleedgesword (
                     id SERIAL PRIMARY KEY,
                     script_url TEXT UNIQUE,
