@@ -11,7 +11,7 @@ ThreatMark, threatmark, javascriptprobeurl
 pingIdentity, pingone, securedtouch
 Bureau.id, bureau.id
 Thales Id, gemalto, gemaltodigitalbankingidcloud, bankingidcloud
-FeedZai, feedzai
+FeedZai, feedzai, feedzai.cloud
 Socure, sigmadevicemanager, socure, device-risk-sdk
 Transmit Security, tsaccountprotectionprovider, tsaccountprotectionready, tsplatform, web_sdk_latest.js
 Experian NeuroID, nid.js, nid_id, data-nid-no-track
@@ -22,11 +22,11 @@ Forter, forter.com, forter
 Celebrus, celebrus
 Authenware, authenware
 Arkose Labs, api.arkoselabs, arkoselabs
-Darwinium, profilinginstance, geo_location_enabled, dwn*.start
+Darwinium, profilinginstance, geo_location_enabled, dwn*.start, dwn_ns
 ThreatFabric, threatfabric
 Accertify, accertify, prod.accdab
 Human PerimeterX, _pxAppId, perimeterx
-F5 Risk Services, riskservices
+F5 Risk Services, riskservices, zeronaught
 DataVisor, dv-api, datavisor
 Graboxy, graboxy
 Sardine, sardine.ai, sardine
