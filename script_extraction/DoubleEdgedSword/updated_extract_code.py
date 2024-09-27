@@ -25,7 +25,7 @@ DB_PARAMS = {
 # Set up basic retry logic with built-in Retry object for minor errors
 session = requests.Session()
 retry = Retry(
-    total=3,                # Lower retries here (to avoid too many retries)
+    total=2,                # Lower retries here (to avoid too many retries)
     backoff_factor=1,        # Use a small backoff factor for minor retries
     status_forcelist=[500, 502, 503, 504],  # Retry on server errors
     raise_on_status=False    # Do not raise exceptions for retries
@@ -41,7 +41,7 @@ def log_message(message):
         log_file.write(message + '\n')
     # print(message)
 
-def exponential_backoff_retry(function, *args, max_retries=5, base_delay=2, **kwargs):
+def exponential_backoff_retry(function, *args, max_retries=2, base_delay=2, **kwargs):
     retry_count = 0
     delay = base_delay
 
@@ -105,7 +105,7 @@ def fetch_javascript(script_url):
     """
     try:
         # Fetch the script with retries using exponential_backoff_retry with a longer timeout
-        response = exponential_backoff_retry(session.get, script_url, timeout=30)
+        response = exponential_backoff_retry(session.get, script_url, timeout=(10,30))
         
         # If the request is successful, return the script content and no error
         if response and response.status_code == 200:
@@ -194,7 +194,7 @@ def query_wayback(script_url, year):
 
     try:
         # Query the Wayback Machine API
-        response = session.get(WAYBACK_API_URL, params=params, timeout=30)
+        response = session.get(WAYBACK_API_URL, params=params, timeout=(10,30))
         
         if response.status_code == 200:
             data = response.json()
