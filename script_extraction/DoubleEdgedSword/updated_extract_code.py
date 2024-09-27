@@ -33,7 +33,7 @@ session.mount("https://", adapter)
 def log_message(message):
     with open(LOG_FILE, 'a') as log_file:
         log_file.write(message + '\n')
-    print(message)
+    # print(message)
 
 def exponential_backoff_retry(function, *args, max_retries=5, base_delay=2, **kwargs):
     retry_count = 0
@@ -145,12 +145,12 @@ def query_wayback(script_url, year):
         - error (str): An error message if the snapshot is not found or if the request fails.
     """
     # Create a timestamp using the beginning of the specified year
-    timestamp = f"{year}0101000000"  # Format: YYYYMMDDHHMMSS
+    timestamp = f"{year}"  # Format: YYYYMMDDHHMMSS
     params = {"url": script_url, "timestamp": timestamp}
 
     try:
         # Query the Wayback Machine API
-        response = session.get(WAYBACK_API_URL, params=params, timeout=15)
+        response = session.get(WAYBACK_API_URL, params=params, timeout=30)
         
         if response.status_code == 200:
             data = response.json()
@@ -252,11 +252,14 @@ def process_scripts(batch_size=100):
                         archived = "No"
                         wayback_url = ""
 
+                        # If no code is found, insert empty string for script_code
                         if not script_code:
                             log_message(f"Script not found for URL: {script_url}. {error}")
-                            progress_bar.update(1)
-                            continue
+                            script_code = None  # Insert empty string (or None if you want NULL)
+                            archived = "No"
+                            wayback_url = ""
 
+                    # Insert the results into the database, even if the script_code is empty
                     insert_into_results(conn, script_url, wayback_url, archived, script_code)
                     progress_bar.update(1)
 
@@ -266,6 +269,7 @@ def process_scripts(batch_size=100):
                 gc.collect()
 
     progress_bar.close()
+
 
 def main():
     with open(LOG_FILE, 'w') as log_file:
