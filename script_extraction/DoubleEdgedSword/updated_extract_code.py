@@ -5,10 +5,10 @@ import pandas as pd
 import gc  # For garbage collection
 from tqdm import tqdm
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy import inspect
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+import psycopg2
 
 # Constants
 WAYBACK_API_URL = "http://archive.org/wayback/available"
@@ -29,35 +29,79 @@ adapter = HTTPAdapter(max_retries=retry)
 session.mount("http://", adapter)
 session.mount("https://", adapter)
 
+# Logging function
 def log_message(message):
     with open(LOG_FILE, 'a') as log_file:
         log_file.write(message + '\n')
+    print(message)
+
+def exponential_backoff_retry(function, *args, max_retries=5, base_delay=2, **kwargs):
+    retry_count = 0
+    delay = base_delay
+
+    while retry_count < max_retries:
+        try:
+            return function(*args, **kwargs)
+        except requests.RequestException as e:
+            retry_count += 1
+            log_message(f"Error: {e}. Retrying in {delay} seconds... (Attempt {retry_count}/{max_retries})")
+            time.sleep(delay)
+            delay *= 2  # Exponentially increase the delay
+            if retry_count == max_retries:
+                log_message(f"Max retries reached for {function.__name__}. Giving up.")
+                return None, str(e)
+
+def fetch_javascript(script_url):
+    """
+    Fetch the JavaScript file from the live web if it is not available from Wayback Machine.
+
+    Args:
+        script_url (str): The URL of the JavaScript file to fetch.
+    
+    Returns:
+        - JavaScript code (if successful)
+        - error message (if the request fails)
+    """
+    try:
+        # Fetch the script with retries using exponential_backoff_retry
+        response = exponential_backoff_retry(session.get, script_url, timeout=10)
+        
+        # If the request is successful, return the script content and no error
+        if response and response.status_code == 200:
+            return response.text, None
+        
+        # Return an error message if the response is not successful
+        return None, f"Error fetching JavaScript from {script_url}: {response.status_code if response else 'No response'}"
+    
+    except requests.RequestException as e:
+        # Catch and return any exceptions that occur during the fetch
+        return None, f"Error fetching JavaScript: {e}"
+
 
 def create_database_if_not_exists():
-    """
-    Check if the database exists, and if not, create it.
-    """
     # Connect to the 'postgres' default database to create the target database if necessary
-    postgres_engine = create_engine(f'postgresql+psycopg2://{DB_PARAMS["user"]}:{DB_PARAMS["password"]}@{DB_PARAMS["host"]}:{DB_PARAMS["port"]}/postgres')
-
+    log_message("Checking if the database exists...")
+    postgres_engine = create_engine(f'postgresql+psycopg2://{DB_PARAMS["user"]}:{DB_PARAMS["password"]}@{DB_PARAMS["host"]}:{DB_PARAMS["port"]}/postgres', isolation_level="AUTOCOMMIT")
+    
     with postgres_engine.connect() as conn:
-        # Check if the target database exists
         result = conn.execute(text(f"SELECT 1 FROM pg_database WHERE datname = '{DB_NAME}'")).fetchone()
         if result is None:
             log_message(f"Database {DB_NAME} does not exist. Creating...")
             conn.execute(text(f"CREATE DATABASE {DB_NAME}"))
+            log_message(f"Database {DB_NAME} created successfully.")
         else:
             log_message(f"Database {DB_NAME} already exists.")
-
-    # Dispose of the 'postgres' engine once the database check/creation is done
     postgres_engine.dispose()
 
-# PostgreSQL connection for SQLAlchemy (target database engine)
 def get_engine():
+    log_message(f"Connecting to the {DB_NAME} database...")
     return create_engine(f'postgresql+psycopg2://{DB_PARAMS["user"]}:{DB_PARAMS["password"]}@{DB_PARAMS["host"]}:{DB_PARAMS["port"]}/{DB_PARAMS["dbname"]}')
 
 def create_result_table_if_not_exists(conn):
     try:
+        log_message("Attempting to create the doubleedgesword table if it doesn't exist...")
+        
+        # Explicitly create the table if it doesn't exist
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS doubleedgesword (
                 id SERIAL PRIMARY KEY,
@@ -67,8 +111,87 @@ def create_result_table_if_not_exists(conn):
                 code TEXT
             );
         """))
-    except Exception as e:
+        
+        log_message("Table 'doubleedgesword' created successfully or already exists.")
+        
+        # Commit after creating the table to avoid transaction issues
+        conn.commit()
+
+    except SQLAlchemyError as e:
         log_message(f"Error creating doubleedgesword table: {e}")
+        conn.rollback()  # Rollback if the table creation fails to reset the transaction
+
+
+def already_fetched(conn, script_url):
+    """
+    Check if a script_url is already in the database.
+    """
+    try:
+        result = conn.execute(text("SELECT 1 FROM doubleedgesword WHERE script_url = :script_url"), {'script_url': script_url}).fetchone()
+        return result is not None
+    except Exception as e:
+        log_message(f"Error checking existing data for {script_url}: {e}")
+        return False
+def query_wayback(script_url, year):
+    """
+    Query the Wayback Machine API for the closest snapshot of the provided script URL for the given year.
+    
+    Args:
+        script_url: The URL of the JavaScript file.
+        year: The year to search for the archived snapshot.
+    
+    Returns:
+        - wayback_url (str): The URL to the archived snapshot, if available.
+        - error (str): An error message if the snapshot is not found or if the request fails.
+    """
+    # Create a timestamp using the beginning of the specified year
+    timestamp = f"{year}0101000000"  # Format: YYYYMMDDHHMMSS
+    params = {"url": script_url, "timestamp": timestamp}
+
+    try:
+        # Query the Wayback Machine API
+        response = session.get(WAYBACK_API_URL, params=params, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Check if an archived snapshot is available
+            if 'archived_snapshots' in data and 'closest' in data['archived_snapshots']:
+                snapshot = data['archived_snapshots']['closest']
+                
+                if snapshot['available']:
+                    return snapshot['url'], None  # Return the wayback URL
+            
+        return None, f"No snapshot found for {year}."  # Return an error if no snapshot found
+    except requests.RequestException as e:
+        return None, f"Error querying Wayback Machine: {e}"  # Return error if the request fails
+
+
+def fetch_wayback_javascript(script_url, years=[2023, 2022]):
+    """
+    Tries to fetch the JavaScript file from the Wayback Machine for the provided URL.
+    It will try for the specified years in descending order (most recent first).
+    
+    Returns:
+        - JavaScript code (if found)
+        - 'Yes' (if archived version is used)
+        - Wayback URL of the archived JavaScript
+    """
+    for year in years:
+        # Query Wayback Machine for available snapshot of the script URL
+        wayback_url, error = exponential_backoff_retry(query_wayback, script_url, year)
+        
+        # If we find a wayback URL
+        if wayback_url:
+            # Try fetching the JavaScript from the Wayback URL
+            response = exponential_backoff_retry(session.get, wayback_url, timeout=15)
+            if response and response.status_code == 200:
+                return response.text, "Yes", wayback_url
+            else:
+                log_message(f"Error fetching Wayback JavaScript: {wayback_url} - {response.status_code if response else 'No response'}")
+    
+    # If no archived version is found, return None values
+    return None, None, None
 
 def insert_into_results(conn, script_url, wayback_url, archived, code):
     try:
@@ -83,77 +206,35 @@ def insert_into_results(conn, script_url, wayback_url, archived, code):
             'archived': archived,
             'code': code
         })
+        conn.commit()  # Commit after successful insertion
+        # log_message(f"Inserted data for {script_url}.")
     except IntegrityError:
+        conn.rollback()  # Rollback the transaction if there's a conflict
         log_message(f"Duplicate entry for {script_url} - skipping.")
     except Exception as e:
+        conn.rollback()  # Rollback the transaction in case of any other error
         log_message(f"Error inserting data for {script_url}: {e}")
 
-def query_wayback(script_url, year):
-    timestamp = f"{year}0101000000"
-    params = {"url": script_url, "timestamp": timestamp}
 
-    try:
-        response = session.get(WAYBACK_API_URL, params=params, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            if 'archived_snapshots' in data and 'closest' in data['archived_snapshots']:
-                snapshot = data['archived_snapshots']['closest']
-                if snapshot['available']:
-                    return snapshot['url'], None
-        return None, f"No snapshot found for {year}."
-    except requests.RequestException as e:
-        return None, f"Error querying Wayback Machine: {e}"
-
-def fetch_javascript(script_url):
-    try:
-        response = session.get(script_url, timeout=10)
-        if response.status_code == 200:
-            return response.text, None
-        return None, f"Error {response.status_code}: {response.reason}"
-    except requests.RequestException as e:
-        return None, f"Error fetching live script: {e}"
-
-def fetch_wayback_javascript(script_url, years=[2023, 2022]):
-    for year in years:
-        time.sleep(2)  # Sleep between requests to avoid hitting rate limits
-        wayback_url, error = query_wayback(script_url, year)
-        if wayback_url:
-            try:
-                response = session.get(wayback_url, timeout=15)
-                if response.status_code == 200:
-                    return response.text, "Yes", wayback_url
-            except requests.RequestException as e:
-                log_message(f"Wayback error fetching {script_url} for {year}: {e}")
-                continue
-    return None, None, None
-
-def already_fetched(conn, script_url):
-    try:
-        result = conn.execute(text("SELECT 1 FROM doubleedgesword WHERE script_url = :script_url"), {'script_url': script_url}).fetchone()
-        return result is not None
-    except Exception as e:
-        log_message(f"Error checking existing data for {script_url}: {e}")
-        return False
-
-def process_scripts(batch_size=1000):
-    """
-    Process URLs in chunks to avoid memory issues or connection timeouts.
-    """
+def process_scripts(batch_size=100):
     engine = get_engine()
+
+    # Create the table before processing scripts
+    with engine.connect() as conn:
+        create_result_table_if_not_exists(conn)
+    
+    # Now process the scripts
     with engine.connect() as connection:
         df = pd.read_sql_query("SELECT script_url FROM duplicate_fp_types;", connection)
 
     total_urls = len(df)
     progress_bar = tqdm(total=total_urls)
     
-    # Process in batches to avoid long-open connections and memory issues
     for start in range(0, total_urls, batch_size):
         end = min(start + batch_size, total_urls)
         batch_df = df[start:end]
 
         with engine.connect() as conn:
-            create_result_table_if_not_exists(conn)
-
             try:
                 for _, row in batch_df.iterrows():
                     script_url = row['script_url']
@@ -162,8 +243,10 @@ def process_scripts(batch_size=1000):
                         progress_bar.update(1)
                         continue
 
+                    # Try to fetch from Wayback Machine
                     script_code, archived, wayback_url = fetch_wayback_javascript(script_url)
 
+                    # If Wayback Machine doesn't have it, fetch directly
                     if not script_code:
                         script_code, error = fetch_javascript(script_url)
                         archived = "No"
@@ -175,13 +258,11 @@ def process_scripts(batch_size=1000):
                             continue
 
                     insert_into_results(conn, script_url, wayback_url, archived, script_code)
-                    time.sleep(2)
                     progress_bar.update(1)
 
             except Exception as e:
                 log_message(f"Error processing scripts: {e}")
             finally:
-                # Perform garbage collection after each batch to prevent memory overload
                 gc.collect()
 
     progress_bar.close()
@@ -190,10 +271,7 @@ def main():
     with open(LOG_FILE, 'w') as log_file:
         log_file.write("Wayback fetch log:\n")
 
-    # Ensure the database is created before doing anything else
-    create_database_if_not_exists()
-
-    # Process the scripts
+    create_database_if_not_exists()  # Ensure the database is created
     process_scripts()
 
 if __name__ == "__main__":
