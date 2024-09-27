@@ -22,12 +22,18 @@ DB_PARAMS = {
     'port': '5432'
 }
 
-# Create a persistent session with retry logic for network requests
+# Set up basic retry logic with built-in Retry object for minor errors
 session = requests.Session()
-retry = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+retry = Retry(
+    total=3,                # Lower retries here (to avoid too many retries)
+    backoff_factor=1,        # Use a small backoff factor for minor retries
+    status_forcelist=[500, 502, 503, 504],  # Retry on server errors
+    raise_on_status=False    # Do not raise exceptions for retries
+)
 adapter = HTTPAdapter(max_retries=retry)
 session.mount("http://", adapter)
 session.mount("https://", adapter)
+
 
 # Logging function
 def log_message(message):
@@ -41,15 +47,50 @@ def exponential_backoff_retry(function, *args, max_retries=5, base_delay=2, **kw
 
     while retry_count < max_retries:
         try:
-            return function(*args, **kwargs)
+            # Make the request or function call
+            response = function(*args, **kwargs)
+            
+            # Check if the response is a tuple (e.g., for query_wayback)
+            if isinstance(response, tuple):
+                return response  # Return the tuple as-is without checking status_code
+
+            # If it's an HTTP response, check for rate limiting (HTTP 429) or other server errors
+            if response.status_code in [429, 500, 502, 503, 504]:
+                retry_count += 1
+                log_message(f"Error {response.status_code}: {response.reason}. Retrying in {delay} seconds... (Attempt {retry_count}/{max_retries})")
+                
+                # Check for Retry-After header in case of rate limiting (HTTP 429)
+                if response.status_code == 429 and 'Retry-After' in response.headers:
+                    retry_after = int(response.headers['Retry-After'])
+                    log_message(f"Rate-limited. Retry after {retry_after} seconds.")
+                    time.sleep(retry_after)
+                else:
+                    # Use exponential backoff
+                    time.sleep(delay)
+                    delay *= 2  # Exponentially increase the delay
+
+                # If max retries reached, log and return None
+                if retry_count == max_retries:
+                    log_message(f"Max retries reached for {function.__name__}. Giving up.")
+                    return None
+            else:
+                # If the request is successful, return the response
+                return response
+
         except requests.RequestException as e:
+            # Handle network-related errors (e.g., timeout, connection errors)
             retry_count += 1
-            log_message(f"Error: {e}. Retrying in {delay} seconds... (Attempt {retry_count}/{max_retries})")
+            log_message(f"Network error: {e}. Retrying in {delay} seconds... (Attempt {retry_count}/{max_retries})")
             time.sleep(delay)
             delay *= 2  # Exponentially increase the delay
+
+            # If max retries reached, log and return None
             if retry_count == max_retries:
                 log_message(f"Max retries reached for {function.__name__}. Giving up.")
-                return None, str(e)
+                return None
+
+
+
 
 def fetch_javascript(script_url):
     """
@@ -63,8 +104,8 @@ def fetch_javascript(script_url):
         - error message (if the request fails)
     """
     try:
-        # Fetch the script with retries using exponential_backoff_retry
-        response = exponential_backoff_retry(session.get, script_url, timeout=10)
+        # Fetch the script with retries using exponential_backoff_retry with a longer timeout
+        response = exponential_backoff_retry(session.get, script_url, timeout=30)
         
         # If the request is successful, return the script content and no error
         if response and response.status_code == 200:
@@ -76,6 +117,9 @@ def fetch_javascript(script_url):
     except requests.RequestException as e:
         # Catch and return any exceptions that occur during the fetch
         return None, f"Error fetching JavaScript: {e}"
+
+
+
 
 
 def create_database_if_not_exists():
@@ -145,7 +189,7 @@ def query_wayback(script_url, year):
         - error (str): An error message if the snapshot is not found or if the request fails.
     """
     # Create a timestamp using the beginning of the specified year
-    timestamp = f"{year}"  # Format: YYYYMMDDHHMMSS
+    timestamp = f"{year}0101000000"
     params = {"url": script_url, "timestamp": timestamp}
 
     try:
@@ -179,19 +223,30 @@ def fetch_wayback_javascript(script_url, years=[2023, 2022]):
     """
     for year in years:
         # Query Wayback Machine for available snapshot of the script URL
-        wayback_url, error = exponential_backoff_retry(query_wayback, script_url, year)
+        wayback_tuple = exponential_backoff_retry(query_wayback, script_url, year)
         
-        # If we find a wayback URL
-        if wayback_url:
-            # Try fetching the JavaScript from the Wayback URL
-            response = exponential_backoff_retry(session.get, wayback_url, timeout=15)
-            if response and response.status_code == 200:
-                return response.text, "Yes", wayback_url
-            else:
-                log_message(f"Error fetching Wayback JavaScript: {wayback_url} - {response.status_code if response else 'No response'}")
+        if wayback_tuple:  # Ensure it's not None
+            wayback_url, error = wayback_tuple
+            
+            if wayback_url:
+                # Fetch the JavaScript from the Wayback URL
+                response = exponential_backoff_retry(session.get, wayback_url, timeout=30)
+                
+                # Check if the fetch was successful
+                if response and response.status_code == 200:
+                    return response.text, "Yes", wayback_url
+                
+                # Log error if the fetch failed
+                log_message(f"Error fetching Wayback JavaScript from {wayback_url}: {response.status_code if response else 'No response'}")
+                time.sleep(2)  # Adding a small delay to avoid rate limiting
     
     # If no archived version is found, return None values
     return None, None, None
+
+
+
+
+
 
 def insert_into_results(conn, script_url, wayback_url, archived, code):
     try:
@@ -261,6 +316,7 @@ def process_scripts(batch_size=100):
 
                     # Insert the results into the database, even if the script_code is empty
                     insert_into_results(conn, script_url, wayback_url, archived, script_code)
+                    time.sleep(2)
                     progress_bar.update(1)
 
             except Exception as e:
