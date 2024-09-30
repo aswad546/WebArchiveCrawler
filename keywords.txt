@@ -2,14 +2,14 @@ Callsign, callsignone, callsign.com
 Deepnet Security, deepnet, deepnetsecurity, typesense
 MangoPay, nethone, mangopay.com, nethone.com
 Nudata, nudata, ndjsstaticversion, nds-pmd, nudatasecurity
-Prove, prove_prefill, prove.com, unifyid
+Prove, prove_prefill, prove.com, unifyid, proveAuth
 SecureAuth, arculix, secureauth, acceptto, biobehavior
 TypingDNA, typingdna, api.typingdna, gettypingpattern
 BioCatch, cdapi, wupmessage, we-stats
 Behaviosec, behaviosec
 ThreatMark, threatmark, javascriptprobeurl
 pingIdentity, pingone, securedtouch
-Bureau.id, bureau.id
+Bureau.id, bureau.id, bureau.browserDeviceEvents
 Thales Id, gemalto, gemaltodigitalbankingidcloud, bankingidcloud
 FeedZai, feedzai, feedzai.cloud
 Socure, sigmadevicemanager, socure, device-risk-sdk
